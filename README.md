@@ -1,4 +1,4 @@
-# This AWS Lambda function inspects the route tables of a specified VPC in your AWS account and identifies relationships between destination CIDR blocks for each route target—specifically, whether any CIDR is a subnet of another within the same target and route table.
+## This AWS Lambda function inspects the route tables of a specified VPC in your AWS account and identifies relationships between destination CIDR blocks for each route target—specifically, whether any CIDR is a subnet of another within the same target and route table.
 
 # Features
 Fetches all route tables associated with a given VPC.
