@@ -1,0 +1,92 @@
+import boto3
+import ipaddress
+from collections import defaultdict
+
+def fetch_target(route):
+    return (
+        route.get('GatewayId') or
+        route.get('NatGatewayId') or
+        route.get('TransitGatewayId') or
+        route.get('NetworkInterfaceId') or
+        route.get('VpcPeeringConnectionId') or
+        route.get('CoreNetworkArn') or
+        route.get('InstanceId') or
+        route.get('LocalGatewayId') or
+        route.get('CarrierGatewayId') or
+        route.get('EgressOnlyInternetGatewayId') or
+        route.get('DestinationPrefixListId') or
+        route.get('VpcEndpointId') or
+        route.get('DestinationCidrBlock') or
+        route.get('VpnGatewayId') or
+        route.get('VpnConnectionId') or
+        route.get('VpnConnectionArn') or
+        route.get('VpnGatewayArn') or
+        route.get('VpnGatewayAttachmentId') or
+        route.get('VpnGatewayAttachmentArn') or
+        'unknown-target'
+    )
+
+def get_routes_grouped_by_route_table_and_target(vpc_id, region_name='us-east-1'):
+    ec2 = boto3.client('ec2', region_name=region_name)
+
+    route_tables = ec2.describe_route_tables(
+        Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}]
+    )['RouteTables']
+
+    route_table_map = defaultdict(lambda: defaultdict(list))
+
+    for rt in route_tables:
+        rtb_id = rt['RouteTableId']
+        for route in rt.get('Routes', []):
+            dest = route.get('DestinationCidrBlock')
+            if not dest:
+                continue
+            target = fetch_target(route)
+            route_table_map[rtb_id][target].append(dest)
+
+    return route_table_map
+
+def compare_destinations_per_route_table(route_table_map):
+    results = []
+
+    for rtb_id, target_map in route_table_map.items():
+        for target, cidrs in target_map.items():
+            networks = [ipaddress.ip_network(cidr) for cidr in set(cidrs)]
+
+            for i in range(len(networks)):
+                for j in range(i + 1, len(networks)):
+                    net1 = networks[i]
+                    net2 = networks[j]
+                    if net1 == net2:
+                        continue
+                    if net1.subnet_of(net2):
+                        results.append(f"{net1} is a subnet of {net2} (target: {target}, route table: {rtb_id})")
+                    elif net2.subnet_of(net1):
+                        results.append(f"{net2} is a subnet of {net1} (target: {target}, route table: {rtb_id})")
+    return results
+
+def lambda_handler(event, context):
+    vpc_id = event.get('vpc_id')
+    region = event.get('region', 'us-east-1')
+
+    if not vpc_id:
+        return {
+            'statusCode': 400,
+            'body': 'Missing required parameter: vpc_id'
+        }
+
+    try:
+        route_table_map = get_routes_grouped_by_route_table_and_target(vpc_id, region)
+        subnet_relationships = compare_destinations_per_route_table(route_table_map)
+
+        return {
+            'statusCode': 200,
+            'body': {
+                'subnet_relationships': subnet_relationships
+            }
+        }
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': f'Error: {str(e)}'
+        }
